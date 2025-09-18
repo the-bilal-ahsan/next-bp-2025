@@ -6,6 +6,8 @@ const Page =()=>{
         <Link href ="/basic-todo-claude.md">basic-todo-claude.md</Link>
         <br />
         <Link href ="/next-auth-gpt.md">next-auth-gpt.md</Link>
+        <br />
+        <Link href ="/git-commands.md">git-commands.md</Link>
         </>
     )
 }
