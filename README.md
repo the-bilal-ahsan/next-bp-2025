@@ -4,8 +4,10 @@ Tailwind
 for installation:
     npm install -D tailwindcss postcss autoprefixer
 for init
+__________________________________________________________
 
-
+Redux Toolkit
+    npm install @reduxjs/toolkit react-redux
 
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).

@@ -3,6 +3,7 @@
 
 import { Typography, Button, Stack } from "@mui/material";
 import ThemeToggle from "@/components/ThemeToggle";
+import FullForm from "@/components/FullForm";
 
 export default function HomePage() {
   return (
@@ -10,6 +11,7 @@ export default function HomePage() {
       <Typography variant="h4">Hello with MUI Theme Toggle 🚀</Typography>
       <ThemeToggle />
       <Button variant="contained">Click Me</Button>
+      <FullForm />
     </Stack>
   );
 }
