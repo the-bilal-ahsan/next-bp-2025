@@ -1,3 +1,13 @@
+<!-- locomative for smooth scrolling -->
+
+Tailwind
+for installation:
+    npm install -D tailwindcss postcss autoprefixer
+for init
+
+
+
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
