@@ -9,6 +9,7 @@ import Link from "next/link"
 export default function HomePage() {
   return (
     <Stack spacing={3} alignItems="center" justifyContent="center" minHeight="100vh">
+      <Link href="ai"> ai</Link><br />
       <Link href="full-custom-form"> full-custom-form</Link>
       <Typography variant="h4">Hello with MUI Theme Toggle 🚀</Typography>
       <ThemeToggle />

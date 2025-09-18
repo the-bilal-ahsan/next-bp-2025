@@ -8,6 +8,10 @@ const Page =()=>{
         <Link href ="/next-auth-gpt.md">next-auth-gpt.md</Link>
         <br />
         <Link href ="/git-commands.md">git-commands.md</Link>
+        <br />
+        <Link href ="/tanstack-query.md">tanstack-query.md</Link>
+        <br />
+        <Link href ="/graphql.md">graphql.md</Link>
         </>
     )
 }
