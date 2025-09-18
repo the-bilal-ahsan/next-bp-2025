@@ -1,0 +1,14 @@
+"use client"
+import Link from "next/link"
+const Page =()=>{
+    return(
+        <>
+        <Link href ="/basic-todo-claude.md">basic-todo-claude.md</Link>
+        <br />
+        <Link href ="/next-auth-gpt.md">next-auth-gpt.md</Link>
+        </>
+    )
+}
+
+
+export default Page
