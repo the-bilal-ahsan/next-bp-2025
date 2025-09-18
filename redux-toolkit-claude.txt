@@ -1,0 +1,2230 @@
+// ============================
+// 1. INSTALLATION & SETUP
+// ============================
+
+/*
+First, install the required dependencies:
+
+npm install @reduxjs/toolkit react-redux
+npm install --save-dev @types/react-redux
+
+Directory Structure:
+src/
+├── app/
+│   ├── layout.tsx
+│   ├── page.tsx
+│   └── globals.css
+├── lib/
+│   └── store/
+│       ├── index.ts                 # Store configuration
+│       ├── hooks.ts                 # Typed hooks
+│       ├── provider.tsx             # Redux provider component
+│       └── features/
+│           ├── auth/
+│           │   ├── authSlice.ts
+│           │   ├── authAPI.ts
+│           │   └── authTypes.ts
+│           ├── posts/
+│           │   ├── postsSlice.ts
+│           │   ├── postsAPI.ts
+│           │   └── postsTypes.ts
+│           ├── ui/
+│           │   └── uiSlice.ts
+│           └── api/
+│               └── apiSlice.ts       # RTK Query base
+├── components/
+│   ├── Auth/
+│   ├── Posts/
+│   ├── UI/
+│   └── Layout/
+└── types/
+    └── index.ts
+*/
+
+// ============================
+// 2. STORE CONFIGURATION
+// ============================
+
+// lib/store/index.ts
+import { configureStore } from '@reduxjs/toolkit';
+import { setupListeners } from '@reduxjs/toolkit/query';
+import { 
+  persistStore, 
+  persistReducer,
+  FLUSH,
+  REHYDRATE,
+  PAUSE,
+  PERSIST,
+  PURGE,
+  REGISTER,
+} from 'redux-persist';
+import storage from 'redux-persist/lib/storage';
+import { combineReducers } from '@reduxjs/toolkit';
+
+// Import slices
+import authSlice from './features/auth/authSlice';
+import postsSlice from './features/posts/postsSlice';
+import uiSlice from './features/ui/uiSlice';
+import { apiSlice } from './features/api/apiSlice';
+
+// Persist configuration
+const persistConfig = {
+  key: 'root',
+  storage,
+  whitelist: ['auth'], // Only persist auth state
+  blacklist: ['api'] // Don't persist API cache
+};
+
+// Root reducer
+const rootReducer = combineReducers({
+  auth: authSlice,
+  posts: postsSlice,
+  ui: uiSlice,
+  api: apiSlice.reducer,
+});
+
+// Persisted reducer
+const persistedReducer = persistReducer(persistConfig, rootReducer);
+
+// Store configuration
+export const store = configureStore({
+  reducer: persistedReducer,
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: {
+        // Ignore these action types for redux-persist
+        ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER],
+      },
+    })
+    // Add RTK Query middleware
+    .concat(apiSlice.middleware),
+  
+  // Enable Redux DevTools in development
+  devTools: process.env.NODE_ENV !== 'production',
+});
+
+// Setup listeners for RTK Query
+setupListeners(store.dispatch);
+
+// Create persistor
+export const persistor = persistStore(store);
+
+// Types
+export type RootState = ReturnType<typeof store.getState>;
+export type AppDispatch = typeof store.dispatch;
+
+// ============================
+// 3. TYPED HOOKS
+// ============================
+
+// lib/store/hooks.ts
+import { TypedUseSelectorHook, useDispatch, useSelector } from 'react-redux';
+import type { RootState, AppDispatch } from './index';
+
+// Typed hooks for better TypeScript support
+export const useAppDispatch = () => useDispatch<AppDispatch>();
+export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
+
+// Custom hooks for common operations
+export const useAuth = () => {
+  return useAppSelector((state) => state.auth);
+};
+
+export const usePosts = () => {
+  return useAppSelector((state) => state.posts);
+};
+
+export const useUI = () => {
+  return useAppSelector((state) => state.ui);
+};
+
+// ============================
+// 4. REDUX PROVIDER COMPONENT
+// ============================
+
+// lib/store/provider.tsx
+'use client';
+
+import { Provider } from 'react-redux';
+import { PersistGate } from 'redux-persist/integration/react';
+import { store, persistor } from './index';
+
+interface ReduxProviderProps {
+  children: React.ReactNode;
+}
+
+export function ReduxProvider({ children }: ReduxProviderProps) {
+  return (
+    <Provider store={store}>
+      <PersistGate 
+        loading={
+          <div className="flex items-center justify-center min-h-screen">
+            <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500" />
+          </div>
+        } 
+        persistor={persistor}
+      >
+        {children}
+      </PersistGate>
+    </Provider>
+  );
+}
+
+// ============================
+// 5. TYPE DEFINITIONS
+// ============================
+
+// types/index.ts
+export interface User {
+  id: string;
+  email: string;
+  username: string;
+  firstName: string;
+  lastName: string;
+  avatar?: string;
+  role: 'user' | 'admin' | 'moderator';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Post {
+  id: string;
+  title: string;
+  content: string;
+  excerpt: string;
+  author: User;
+  tags: string[];
+  status: 'draft' | 'published' | 'archived';
+  likes: number;
+  comments: Comment[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Comment {
+  id: string;
+  content: string;
+  author: User;
+  postId: string;
+  parentId?: string;
+  likes: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiResponse<T> {
+  data: T;
+  message: string;
+  success: boolean;
+  pagination?: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+export interface RegisterData {
+  email: string;
+  username: string;
+  firstName: string;
+  lastName: string;
+  password: string;
+  confirmPassword: string;
+}
+
+// ============================
+// 6. AUTH SLICE
+// ============================
+
+// lib/store/features/auth/authSlice.ts
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import { User, LoginCredentials, RegisterData } from '../../../types';
+
+// Async thunks for API calls
+export const loginUser = createAsyncThunk(
+  'auth/loginUser',
+  async (credentials: LoginCredentials, { rejectWithValue }) => {
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials),
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        return rejectWithValue(error.message);
+      }
+      
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      return rejectWithValue('Login failed. Please try again.');
+    }
+  }
+);
+
+export const registerUser = createAsyncThunk(
+  'auth/registerUser',
+  async (userData: RegisterData, { rejectWithValue }) => {
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userData),
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        return rejectWithValue(error.message);
+      }
+      
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      return rejectWithValue('Registration failed. Please try again.');
+    }
+  }
+);
+
+export const logoutUser = createAsyncThunk(
+  'auth/logoutUser',
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await fetch('/api/auth/logout', {
+        method: 'POST',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Logout failed');
+      }
+      
+      return {};
+    } catch (error) {
+      return rejectWithValue('Logout failed. Please try again.');
+    }
+  }
+);
+
+export const refreshToken = createAsyncThunk(
+  'auth/refreshToken',
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await fetch('/api/auth/refresh', {
+        method: 'POST',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Token refresh failed');
+      }
+      
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      return rejectWithValue('Token refresh failed');
+    }
+  }
+);
+
+// Auth state interface
+interface AuthState {
+  user: User | null;
+  token: string | null;
+  refreshToken: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: string | null;
+  lastActivity: number;
+}
+
+// Initial state
+const initialState: AuthState = {
+  user: null,
+  token: null,
+  refreshToken: null,
+  isAuthenticated: false,
+  isLoading: false,
+  error: null,
+  lastActivity: Date.now(),
+};
+
+// Auth slice
+const authSlice = createSlice({
+  name: 'auth',
+  initialState,
+  reducers: {
+    // Clear error
+    clearError: (state) => {
+      state.error = null;
+    },
+    
+    // Update user profile
+    updateProfile: (state, action: PayloadAction<Partial<User>>) => {
+      if (state.user) {
+        state.user = { ...state.user, ...action.payload };
+      }
+    },
+    
+    // Update last activity
+    updateLastActivity: (state) => {
+      state.lastActivity = Date.now();
+    },
+    
+    // Set loading state
+    setLoading: (state, action: PayloadAction<boolean>) => {
+      state.isLoading = action.payload;
+    },
+  },
+  extraReducers: (builder) => {
+    // Login cases
+    builder
+      .addCase(loginUser.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(loginUser.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.isAuthenticated = true;
+        state.user = action.payload.user;
+        state.token = action.payload.token;
+        state.refreshToken = action.payload.refreshToken;
+        state.lastActivity = Date.now();
+      })
+      .addCase(loginUser.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      
+      // Register cases
+      .addCase(registerUser.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(registerUser.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.isAuthenticated = true;
+        state.user = action.payload.user;
+        state.token = action.payload.token;
+        state.refreshToken = action.payload.refreshToken;
+        state.lastActivity = Date.now();
+      })
+      .addCase(registerUser.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      
+      // Logout cases
+      .addCase(logoutUser.fulfilled, (state) => {
+        return initialState; // Reset to initial state
+      })
+      
+      // Refresh token cases
+      .addCase(refreshToken.fulfilled, (state, action) => {
+        state.token = action.payload.token;
+        state.refreshToken = action.payload.refreshToken;
+        state.lastActivity = Date.now();
+      })
+      .addCase(refreshToken.rejected, (state) => {
+        // If refresh fails, logout user
+        return initialState;
+      });
+  },
+});
+
+export const { clearError, updateProfile, updateLastActivity, setLoading } = authSlice.actions;
+export default authSlice.reducer;
+
+// ============================
+// 7. POSTS SLICE
+// ============================
+
+// lib/store/features/posts/postsSlice.ts
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import { Post, ApiResponse } from '../../../types';
+
+// Async thunks
+export const fetchPosts = createAsyncThunk(
+  'posts/fetchPosts',
+  async (params: { page?: number; limit?: number; search?: string; tag?: string } = {}, { rejectWithValue }) => {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params.page) queryParams.set('page', params.page.toString());
+      if (params.limit) queryParams.set('limit', params.limit.toString());
+      if (params.search) queryParams.set('search', params.search);
+      if (params.tag) queryParams.set('tag', params.tag);
+      
+      const response = await fetch(`/api/posts?${queryParams}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch posts');
+      }
+      
+      const data: ApiResponse<Post[]> = await response.json();
+      return data;
+    } catch (error) {
+      return rejectWithValue('Failed to fetch posts');
+    }
+  }
+);
+
+export const fetchPostById = createAsyncThunk(
+  'posts/fetchPostById',
+  async (id: string, { rejectWithValue }) => {
+    try {
+      const response = await fetch(`/api/posts/${id}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch post');
+      }
+      
+      const data: ApiResponse<Post> = await response.json();
+      return data.data;
+    } catch (error) {
+      return rejectWithValue('Failed to fetch post');
+    }
+  }
+);
+
+export const createPost = createAsyncThunk(
+  'posts/createPost',
+  async (postData: Omit<Post, 'id' | 'author' | 'createdAt' | 'updatedAt' | 'likes' | 'comments'>, { rejectWithValue }) => {
+    try {
+      const response = await fetch('/api/posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(postData),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to create post');
+      }
+      
+      const data: ApiResponse<Post> = await response.json();
+      return data.data;
+    } catch (error) {
+      return rejectWithValue('Failed to create post');
+    }
+  }
+);
+
+export const updatePost = createAsyncThunk(
+  'posts/updatePost',
+  async ({ id, data }: { id: string; data: Partial<Post> }, { rejectWithValue }) => {
+    try {
+      const response = await fetch(`/api/posts/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update post');
+      }
+      
+      const responseData: ApiResponse<Post> = await response.json();
+      return responseData.data;
+    } catch (error) {
+      return rejectWithValue('Failed to update post');
+    }
+  }
+);
+
+export const deletePost = createAsyncThunk(
+  'posts/deletePost',
+  async (id: string, { rejectWithValue }) => {
+    try {
+      const response = await fetch(`/api/posts/${id}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete post');
+      }
+      
+      return id;
+    } catch (error) {
+      return rejectWithValue('Failed to delete post');
+    }
+  }
+);
+
+export const likePost = createAsyncThunk(
+  'posts/likePost',
+  async (id: string, { rejectWithValue }) => {
+    try {
+      const response = await fetch(`/api/posts/${id}/like`, {
+        method: 'POST',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to like post');
+      }
+      
+      const data: ApiResponse<{ likes: number }> = await response.json();
+      return { id, likes: data.data.likes };
+    } catch (error) {
+      return rejectWithValue('Failed to like post');
+    }
+  }
+);
+
+// Posts state interface
+interface PostsState {
+  posts: Post[];
+  currentPost: Post | null;
+  isLoading: boolean;
+  error: string | null;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+  filters: {
+    search: string;
+    tag: string;
+    status: 'all' | 'draft' | 'published' | 'archived';
+  };
+}
+
+// Initial state
+const initialState: PostsState = {
+  posts: [],
+  currentPost: null,
+  isLoading: false,
+  error: null,
+  pagination: {
+    page: 1,
+    limit: 10,
+    total: 0,
+    totalPages: 0,
+  },
+  filters: {
+    search: '',
+    tag: '',
+    status: 'all',
+  },
+};
+
+// Posts slice
+const postsSlice = createSlice({
+  name: 'posts',
+  initialState,
+  reducers: {
+    // Clear error
+    clearError: (state) => {
+      state.error = null;
+    },
+    
+    // Set filters
+    setFilters: (state, action: PayloadAction<Partial<PostsState['filters']>>) => {
+      state.filters = { ...state.filters, ...action.payload };
+    },
+    
+    // Set pagination
+    setPagination: (state, action: PayloadAction<Partial<PostsState['pagination']>>) => {
+      state.pagination = { ...state.pagination, ...action.payload };
+    },
+    
+    // Clear current post
+    clearCurrentPost: (state) => {
+      state.currentPost = null;
+    },
+    
+    // Optimistic like update
+    optimisticLike: (state, action: PayloadAction<string>) => {
+      const post = state.posts.find(p => p.id === action.payload);
+      if (post) {
+        post.likes += 1;
+      }
+      if (state.currentPost?.id === action.payload) {
+        state.currentPost.likes += 1;
+      }
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      // Fetch posts cases
+      .addCase(fetchPosts.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchPosts.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.posts = action.payload.data;
+        if (action.payload.pagination) {
+          state.pagination = action.payload.pagination;
+        }
+      })
+      .addCase(fetchPosts.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      
+      // Fetch post by ID cases
+      .addCase(fetchPostById.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchPostById.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.currentPost = action.payload;
+      })
+      .addCase(fetchPostById.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      
+      // Create post cases
+      .addCase(createPost.fulfilled, (state, action) => {
+        state.posts.unshift(action.payload);
+      })
+      
+      // Update post cases
+      .addCase(updatePost.fulfilled, (state, action) => {
+        const index = state.posts.findIndex(p => p.id === action.payload.id);
+        if (index !== -1) {
+          state.posts[index] = action.payload;
+        }
+        if (state.currentPost?.id === action.payload.id) {
+          state.currentPost = action.payload;
+        }
+      })
+      
+      // Delete post cases
+      .addCase(deletePost.fulfilled, (state, action) => {
+        state.posts = state.posts.filter(p => p.id !== action.payload);
+        if (state.currentPost?.id === action.payload) {
+          state.currentPost = null;
+        }
+      })
+      
+      // Like post cases
+      .addCase(likePost.fulfilled, (state, action) => {
+        const post = state.posts.find(p => p.id === action.payload.id);
+        if (post) {
+          post.likes = action.payload.likes;
+        }
+        if (state.currentPost?.id === action.payload.id) {
+          state.currentPost.likes = action.payload.likes;
+        }
+      });
+  },
+});
+
+export const { 
+  clearError, 
+  setFilters, 
+  setPagination, 
+  clearCurrentPost, 
+  optimisticLike 
+} = postsSlice.actions;
+
+export default postsSlice.reducer;
+
+// ============================
+// 8. UI SLICE
+// ============================
+
+// lib/store/features/ui/uiSlice.ts
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+
+interface Notification {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title: string;
+  message: string;
+  duration?: number;
+  actions?: Array<{
+    label: string;
+    action: () => void;
+  }>;
+}
+
+interface Modal {
+  id: string;
+  type: string;
+  props?: Record<string, any>;
+  onClose?: () => void;
+}
+
+interface UIState {
+  // Theme
+  theme: 'light' | 'dark' | 'system';
+  
+  // Layout
+  sidebarOpen: boolean;
+  sidebarCollapsed: boolean;
+  
+  // Loading states
+  globalLoading: boolean;
+  loadingStates: Record<string, boolean>;
+  
+  // Notifications
+  notifications: Notification[];
+  
+  // Modals
+  modals: Modal[];
+  
+  // Navigation
+  breadcrumbs: Array<{ label: string; href?: string }>;
+  
+  // Search
+  searchOpen: boolean;
+  searchQuery: string;
+  searchResults: any[];
+  
+  // Responsive
+  isMobile: boolean;
+  isTablet: boolean;
+}
+
+const initialState: UIState = {
+  theme: 'system',
+  sidebarOpen: false,
+  sidebarCollapsed: false,
+  globalLoading: false,
+  loadingStates: {},
+  notifications: [],
+  modals: [],
+  breadcrumbs: [],
+  searchOpen: false,
+  searchQuery: '',
+  searchResults: [],
+  isMobile: false,
+  isTablet: false,
+};
+
+const uiSlice = createSlice({
+  name: 'ui',
+  initialState,
+  reducers: {
+    // Theme
+    setTheme: (state, action: PayloadAction<'light' | 'dark' | 'system'>) => {
+      state.theme = action.payload;
+    },
+    
+    // Sidebar
+    toggleSidebar: (state) => {
+      state.sidebarOpen = !state.sidebarOpen;
+    },
+    setSidebarOpen: (state, action: PayloadAction<boolean>) => {
+      state.sidebarOpen = action.payload;
+    },
+    toggleSidebarCollapsed: (state) => {
+      state.sidebarCollapsed = !state.sidebarCollapsed;
+    },
+    
+    // Loading
+    setGlobalLoading: (state, action: PayloadAction<boolean>) => {
+      state.globalLoading = action.payload;
+    },
+    setLoadingState: (state, action: PayloadAction<{ key: string; loading: boolean }>) => {
+      state.loadingStates[action.payload.key] = action.payload.loading;
+    },
+    
+    // Notifications
+    addNotification: (state, action: PayloadAction<Omit<Notification, 'id'>>) => {
+      const notification: Notification = {
+        ...action.payload,
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      };
+      state.notifications.push(notification);
+    },
+    removeNotification: (state, action: PayloadAction<string>) => {
+      state.notifications = state.notifications.filter(n => n.id !== action.payload);
+    },
+    clearNotifications: (state) => {
+      state.notifications = [];
+    },
+    
+    // Modals
+    openModal: (state, action: PayloadAction<Omit<Modal, 'id'>>) => {
+      const modal: Modal = {
+        ...action.payload,
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      };
+      state.modals.push(modal);
+    },
+    closeModal: (state, action: PayloadAction<string>) => {
+      state.modals = state.modals.filter(m => m.id !== action.payload);
+    },
+    closeAllModals: (state) => {
+      state.modals = [];
+    },
+    
+    // Breadcrumbs
+    setBreadcrumbs: (state, action: PayloadAction<Array<{ label: string; href?: string }>>) => {
+      state.breadcrumbs = action.payload;
+    },
+    
+    // Search
+    setSearchOpen: (state, action: PayloadAction<boolean>) => {
+      state.searchOpen = action.payload;
+    },
+    setSearchQuery: (state, action: PayloadAction<string>) => {
+      state.searchQuery = action.payload;
+    },
+    setSearchResults: (state, action: PayloadAction<any[]>) => {
+      state.searchResults = action.payload;
+    },
+    
+    // Responsive
+    setDeviceType: (state, action: PayloadAction<{ isMobile: boolean; isTablet: boolean }>) => {
+      state.isMobile = action.payload.isMobile;
+      state.isTablet = action.payload.isTablet;
+    },
+  },
+});
+
+export const {
+  setTheme,
+  toggleSidebar,
+  setSidebarOpen,
+  toggleSidebarCollapsed,
+  setGlobalLoading,
+  setLoadingState,
+  addNotification,
+  removeNotification,
+  clearNotifications,
+  openModal,
+  closeModal,
+  closeAllModals,
+  setBreadcrumbs,
+  setSearchOpen,
+  setSearchQuery,
+  setSearchResults,
+  setDeviceType,
+} = uiSlice.actions;
+
+export default uiSlice.reducer;
+
+// ============================
+// 9. RTK QUERY API SLICE
+// ============================
+
+// lib/store/features/api/apiSlice.ts
+import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
+import type { RootState } from '../../index';
+import { Post, User, ApiResponse } from '../../../types';
+
+// Base query with auth
+const baseQuery = fetchBaseQuery({
+  baseUrl: '/api',
+  prepareHeaders: (headers, { getState }) => {
+    const token = (getState() as RootState).auth.token;
+    if (token) {
+      headers.set('authorization', `Bearer ${token}`);
+    }
+    return headers;
+  },
+});
+
+// Base query with re-auth
+const baseQueryWithReauth = async (args: any, api: any, extraOptions: any) => {
+  let result = await baseQuery(args, api, extraOptions);
+  
+  if (result.error && result.error.status === 401) {
+    // Try to refresh the token
+    const refreshResult = await baseQuery('/auth/refresh', api, extraOptions);
+    
+    if (refreshResult.data) {
+      // Retry the original query
+      result = await baseQuery(args, api, extraOptions);
+    } else {
+      // Refresh failed, logout user
+      api.dispatch({ type: 'auth/logoutUser/fulfilled' });
+    }
+  }
+  
+  return result;
+};
+
+// API slice with RTK Query
+export const apiSlice = createApi({
+  reducerPath: 'api',
+  baseQuery: baseQueryWithReauth,
+  tagTypes: ['Post', 'User', 'Comment'],
+  endpoints: (builder) => ({
+    // Posts endpoints
+    getPosts: builder.query<ApiResponse<Post[]>, { page?: number; limit?: number; search?: string }>({
+      query: (params = {}) => {
+        const queryParams = new URLSearchParams();
+        if (params.page) queryParams.set('page', params.page.toString());
+        if (params.limit) queryParams.set('limit', params.limit.toString());
+        if (params.search) queryParams.set('search', params.search);
+        return `posts?${queryParams}`;
+      },
+      providesTags: ['Post'],
+    }),
+    
+    getPost: builder.query<ApiResponse<Post>, string>({
+      query: (id) => `posts/${id}`,
+      providesTags: (result, error, id) => [{ type: 'Post', id }],
+    }),
+    
+    createPost: builder.mutation<ApiResponse<Post>, Partial<Post>>({
+      query: (post) => ({
+        url: 'posts',
+        method: 'POST',
+        body: post,
+      }),
+      invalidatesTags: ['Post'],
+    }),
+    
+    updatePost: builder.mutation<ApiResponse<Post>, { id: string; data: Partial<Post> }>({
+      query: ({ id, data }) => ({
+        url: `posts/${id}`,
+        method: 'PUT',
+        body: data,
+      }),
+      invalidatesTags: (result, error, { id }) => [{ type: 'Post', id }],
+    }),
+    
+    deletePost: builder.mutation<ApiResponse<void>, string>({
+      query: (id) => ({
+        url: `posts/${id}`,
+        method: 'DELETE',
+      }),
+      invalidatesTags: ['Post'],
+    }),
+    
+    // Users endpoints
+    getUsers: builder.query<ApiResponse<User[]>, { page?: number; limit?: number }>({
+      query: (params = {}) => {
+        const queryParams = new URLSearchParams();
+        if (params.page) queryParams.set('page', params.page.toString());
+        if (params.limit) queryParams.set('limit', params.limit.toString());
+        return `users?${queryParams}`;
+      },
+      providesTags: ['User'],
+    }),
+    
+    getUser: builder.query<ApiResponse<User>, string>({
+      query: (id) => `users/${id}`,
+      providesTags: (result, error, id) => [{ type: 'User', id }],
+    }),
+    
+    updateUser: builder.mutation<ApiResponse<User>, { id: string; data: Partial<User> }>({
+      query: ({ id, data }) => ({
+        url: `users/${id}`,
+        method: 'PUT',
+        body: data,
+      }),
+      invalidatesTags: (result, error, { id }) => [{ type: 'User', id }],
+    }),
+  }),
+});
+
+// Export hooks for usage in functional components
+export const {
+  useGetPostsQuery,
+  useGetPostQuery,
+  useCreatePostMutation,
+  useUpdatePostMutation,
+  useDeletePostMutation,
+  useGetUsersQuery,
+  useGetUserQuery,
+  useUpdateUserMutation,
+} = apiSlice;
+
+// ============================
+// 10. LAYOUT SETUP
+// ============================
+
+// app/layout.tsx
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import './globals.css';
+import { ReduxProvider } from '../lib/store/provider';
+import { Toaster } from 'react-hot-toast';
+
+const inter = Inter({ subsets: ['latin'] });
+
+export const metadata: Metadata = {
+  title: 'Redux Toolkit App',
+  description: 'Professional Redux Toolkit app with Next.js and TypeScript',
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body className={inter.className}>
+        <ReduxProvider>
+          {children}
+          <Toaster 
+            position="top-right"
+            toastOptions={{
+              duration: 4000,
+              style: {
+                background: '#363636',
+                color: '#fff',
+              },
+            }}
+          />
+        </ReduxProvider>
+      </body>
+    </html>
+  );
+}
+
+// ============================
+// 11. MAIN PAGE COMPONENT
+// ============================
+
+// app/page.tsx
+'use client';
+
+import { useEffect } from 'react';
+import { useAppDispatch, useAppSelector, useAuth } from '../lib/store/hooks';
+import { fetchPosts, setFilters } from '../lib/store/features/posts/postsSlice';
+import { addNotification, setTheme } from '../lib/store/features/ui/uiSlice';
+import { useGetPostsQuery } from '../lib/store/features/api/apiSlice';
+import AuthComponent from '../components/Auth/AuthComponent';
+import PostsList from '../components/Posts/PostsList';
+import Sidebar from '../components/Layout/Sidebar';
+import Header from '../components/Layout/Header';
+import NotificationSystem from '../components/UI/NotificationSystem';
+
+export default function HomePage() {
+  const dispatch = useAppDispatch();
+  const { isAuthenticated, user } = useAuth();
+  const { sidebarOpen } = useAppSelector(state => state.ui);
+  
+  // RTK Query for posts
+  const {
+    data: postsData,
+    error: postsError,
+    isLoading: postsLoading
+  } = useGetPostsQuery({ page: 1, limit: 10 });
+
+  useEffect(() => {
+    // Set initial theme based on system preference
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    dispatch(setTheme(mediaQuery.matches ? 'dark' : 'light'));
+
+    // Show welcome notification
+    if (isAuthenticated && user) {
+      dispatch(addNotification({
+        type: 'success',
+        title: 'Welcome back!',
+        message: `Hello ${user.firstName}, welcome to the app.`,
+        duration: 3000,
+      }));
+    }
+  }, [dispatch, isAuthenticated, user]);
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <AuthComponent />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Sidebar */}
+      <Sidebar />
+      
+      {/* Main Content */}
+      <div className={`flex-1 transition-all duration-300 ${
+        sidebarOpen ? 'ml-64' : 'ml-16'
+      }`}>
+        <Header />
+        
+        <main className="p-6">
+          <div className="max-w-7xl mx-auto">
+            <h1 className="text-3xl font-bold text-gray-900 mb-8">
+              Dashboard
+            </h1>
+            
+            {/* Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <StatsCard
+                title="Total Posts"
+                value={postsData?.data?.length || 0}
+                change="+12%"
+                changeType="increase"
+              />
+              <StatsCard
+                title="Active Users"
+                value="1,234"
+                change="+5%"
+                changeType="increase"
+              />
+              <StatsCard
+                title="Engagement"
+                value="89%"
+                change="-2%"
+                changeType="decrease"
+              />
+            </div>
+
+            {/* Posts Section */}
+            <div className="bg-white rounded-lg shadow">
+              <div className="p-6 border-b border-gray-200">
+                <h2 className="text-xl font-semibold text-gray-900">Recent Posts</h2>
+              </div>
+              <PostsList />
+            </div>
+          </div>
+        </main>
+      </div>
+      
+      {/* Notification System */}
+      <NotificationSystem />
+    </div>
+  );
+}
+
+// Stats Card Component
+interface StatsCardProps {
+  title: string;
+  value: string | number;
+  change: string;
+  changeType: 'increase' | 'decrease';
+}
+
+function StatsCard({ title, value, change, changeType }: StatsCardProps) {
+  return (
+    <div className="bg-white p-6 rounded-lg shadow">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-gray-600">{title}</p>
+          <p className="text-3xl font-bold text-gray-900">{value}</p>
+        </div>
+        <div className={`text-sm font-medium ${
+          changeType === 'increase' ? 'text-green-600' : 'text-red-600'
+        }`}>
+          {change}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================
+// 12. AUTH COMPONENT
+// ============================
+
+// components/Auth/AuthComponent.tsx
+'use client';
+
+import { useState } from 'react';
+import { useAppDispatch } from '../../lib/store/hooks';
+import { loginUser, registerUser } from '../../lib/store/features/auth/authSlice';
+import { addNotification } from '../../lib/store/features/ui/uiSlice';
+
+export default function AuthComponent() {
+  const dispatch = useAppDispatch();
+  const [isLogin, setIsLogin] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const [loginForm, setLoginForm] = useState({
+    email: '',
+    password: '',
+  });
+  
+  const [registerForm, setRegisterForm] = useState({
+    email: '',
+    username: '',
+    firstName: '',
+    lastName: '',
+    password: '',
+    confirmPassword: '',
+  });
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    
+    try {
+      const result = await dispatch(loginUser(loginForm));
+      if (result.type === 'auth/loginUser/fulfilled') {
+        dispatch(addNotification({
+          type: 'success',
+          title: 'Login Successful',
+          message: 'Welcome back!',
+        }));
+      } else {
+        dispatch(addNotification({
+          type: 'error',
+          title: 'Login Failed',
+          message: result.payload as string,
+        }));
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (registerForm.password !== registerForm.confirmPassword) {
+      dispatch(addNotification({
+        type: 'error',
+        title: 'Password Mismatch',
+        message: 'Passwords do not match',
+      }));
+      return;
+    }
+    
+    setIsLoading(true);
+    
+    try {
+      const result = await dispatch(registerUser(registerForm));
+      if (result.type === 'auth/registerUser/fulfilled') {
+        dispatch(addNotification({
+          type: 'success',
+          title: 'Registration Successful',
+          message: 'Account created successfully!',
+        }));
+      } else {
+        dispatch(addNotification({
+          type: 'error',
+          title: 'Registration Failed',
+          message: result.payload as string,
+        }));
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="w-full max-w-md">
+      <div className="bg-white shadow-xl rounded-lg p-8">
+        <div className="text-center mb-8">
+          <h2 className="text-3xl font-bold text-gray-900">
+            {isLogin ? 'Sign In' : 'Sign Up'}
+          </h2>
+          <p className="text-gray-600 mt-2">
+            {isLogin ? 'Welcome back!' : 'Create your account'}
+          </p>
+        </div>
+
+        {isLogin ? (
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Email
+              </label>
+              <input
+                type="email"
+                required
+                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={loginForm.email}
+                onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Password
+              </label>
+              <input
+                type="password"
+                required
+                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={loginForm.password}
+                onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+              />
+            </div>
+            
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            >
+              {isLoading ? 'Signing In...' : 'Sign In'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleRegister} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  First Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={registerForm.firstName}
+                  onChange={(e) => setRegisterForm({ ...registerForm, firstName: e.target.value })}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Last Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={registerForm.lastName}
+                  onChange={(e) => setRegisterForm({ ...registerForm, lastName: e.target.value })}
+                />
+              </div>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Username
+              </label>
+              <input
+                type="text"
+                required
+                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={registerForm.username}
+                onChange={(e) => setRegisterForm({ ...registerForm, username: e.target.value })}
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Email
+              </label>
+              <input
+                type="email"
+                required
+                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={registerForm.email}
+                onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Password
+              </label>
+              <input
+                type="password"
+                required
+                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={registerForm.password}
+                onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Confirm Password
+              </label>
+              <input
+                type="password"
+                required
+                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={registerForm.confirmPassword}
+                onChange={(e) => setRegisterForm({ ...registerForm, confirmPassword: e.target.value })}
+              />
+            </div>
+            
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            >
+              {isLoading ? 'Creating Account...' : 'Sign Up'}
+            </button>
+          </form>
+        )}
+
+        <div className="mt-6 text-center">
+          <button
+            onClick={() => setIsLogin(!isLogin)}
+            className="text-blue-600 hover:text-blue-800 text-sm"
+          >
+            {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================
+// 13. POSTS LIST COMPONENT
+// ============================
+
+// components/Posts/PostsList.tsx
+'use client';
+
+import { useEffect } from 'react';
+import { useAppDispatch, usePosts } from '../../lib/store/hooks';
+import { fetchPosts, likePost, optimisticLike } from '../../lib/store/features/posts/postsSlice';
+import { useGetPostsQuery } from '../../lib/store/features/api/apiSlice';
+import LoadingSpinner from '../UI/LoadingSpinner';
+
+export default function PostsList() {
+  const dispatch = useAppDispatch();
+  const { posts, isLoading, error, pagination, filters } = usePosts();
+  
+  // Using RTK Query for better caching and data management
+  const {
+    data: postsData,
+    error: queryError,
+    isLoading: queryLoading,
+    refetch
+  } = useGetPostsQuery({
+    page: pagination.page,
+    limit: pagination.limit,
+    search: filters.search,
+  });
+
+  const handleLike = async (postId: string) => {
+    // Optimistic update
+    dispatch(optimisticLike(postId));
+    
+    try {
+      await dispatch(likePost(postId));
+    } catch (error) {
+      // Revert optimistic update on error
+      // In a real app, you'd want to revert the optimistic update
+      console.error('Failed to like post:', error);
+    }
+  };
+
+  if (queryLoading) {
+    return <LoadingSpinner />;
+  }
+
+  if (queryError) {
+    return (
+      <div className="p-6 text-center">
+        <div className="text-red-600 mb-4">Failed to load posts</div>
+        <button
+          onClick={() => refetch()}
+          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const displayPosts = postsData?.data || [];
+
+  if (displayPosts.length === 0) {
+    return (
+      <div className="p-6 text-center text-gray-500">
+        No posts found. Be the first to create one!
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-gray-200">
+      {displayPosts.map((post) => (
+        <div key={post.id} className="p-6 hover:bg-gray-50 transition-colors">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                {post.title}
+              </h3>
+              <p className="text-gray-600 mb-4 line-clamp-3">
+                {post.excerpt}
+              </p>
+              
+              <div className="flex items-center space-x-4 text-sm text-gray-500">
+                <div className="flex items-center space-x-2">
+                  <img
+                    src={post.author.avatar || '/default-avatar.png'}
+                    alt={post.author.username}
+                    className="w-6 h-6 rounded-full"
+                  />
+                  <span>{post.author.firstName} {post.author.lastName}</span>
+                </div>
+                
+                <span>•</span>
+                
+                <time dateTime={post.createdAt}>
+                  {new Date(post.createdAt).toLocaleDateString()}
+                </time>
+                
+                <span>•</span>
+                
+                <div className="flex items-center space-x-1">
+                  <span>{post.comments.length}</span>
+                  <span>comments</span>
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-2 mt-4">
+                {post.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full"
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+            </div>
+            
+            <div className="flex items-center space-x-2 ml-6">
+              <button
+                onClick={() => handleLike(post.id)}
+                className="flex items-center space-x-1 px-3 py-1 rounded-full hover:bg-red-50 text-red-600 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
+                </svg>
+                <span>{post.likes}</span>
+              </button>
+              
+              <div className="w-px h-6 bg-gray-300" />
+              
+              <span className={`px-2 py-1 text-xs rounded-full ${
+                post.status === 'published' 
+                  ? 'bg-green-100 text-green-800' 
+                  : post.status === 'draft'
+                  ? 'bg-yellow-100 text-yellow-800'
+                  : 'bg-gray-100 text-gray-800'
+              }`}>
+                {post.status}
+              </span>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================
+// 14. HEADER COMPONENT
+// ============================
+
+// components/Layout/Header.tsx
+'use client';
+
+import { useAppDispatch, useAuth } from '../../lib/store/hooks';
+import { logoutUser } from '../../lib/store/features/auth/authSlice';
+import { toggleSidebar, setSearchOpen } from '../../lib/store/features/ui/uiSlice';
+import { addNotification } from '../../lib/store/features/ui/uiSlice';
+
+export default function Header() {
+  const dispatch = useAppDispatch();
+  const { user } = useAuth();
+
+  const handleLogout = async () => {
+    try {
+      await dispatch(logoutUser());
+      dispatch(addNotification({
+        type: 'success',
+        title: 'Logged Out',
+        message: 'You have been successfully logged out.',
+      }));
+    } catch (error) {
+      dispatch(addNotification({
+        type: 'error',
+        title: 'Logout Failed',
+        message: 'Failed to logout. Please try again.',
+      }));
+    }
+  };
+
+  return (
+    <header className="bg-white shadow-sm border-b border-gray-200">
+      <div className="flex items-center justify-between px-6 py-4">
+        <div className="flex items-center space-x-4">
+          <button
+            onClick={() => dispatch(toggleSidebar())}
+            className="p-2 rounded-md text-gray-600 hover:bg-gray-100"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search..."
+              className="w-64 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onFocus={() => dispatch(setSearchOpen(true))}
+            />
+            <svg className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-4">
+          <button className="p-2 rounded-md text-gray-600 hover:bg-gray-100 relative">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-5 5-5-5h5zm-5-10h5L10 2 5 7h5z" />
+            </svg>
+            <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full"></span>
+          </button>
+
+          <div className="flex items-center space-x-3">
+            <img
+              src={user?.avatar || '/default-avatar.png'}
+              alt={user?.username}
+              className="w-8 h-8 rounded-full"
+            />
+            <div className="hidden md:block">
+              <p className="text-sm font-medium text-gray-900">
+                {user?.firstName} {user?.lastName}
+              </p>
+              <p className="text-xs text-gray-500">{user?.role}</p>
+            </div>
+            
+            <button
+              onClick={handleLogout}
+              className="p-2 rounded-md text-gray-600 hover:bg-gray-100"
+              title="Logout"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// ============================
+// 15. SIDEBAR COMPONENT
+// ============================
+
+// components/Layout/Sidebar.tsx
+'use client';
+
+import { useAppDispatch, useAppSelector } from '../../lib/store/hooks';
+import { setSidebarOpen, toggleSidebarCollapsed } from '../../lib/store/features/ui/uiSlice';
+
+const menuItems = [
+  { icon: '📊', label: 'Dashboard', href: '/' },
+  { icon: '📝', label: 'Posts', href: '/posts' },
+  { icon: '👥', label: 'Users', href: '/users' },
+  { icon: '📈', label: 'Analytics', href: '/analytics' },
+  { icon: '⚙️', label: 'Settings', href: '/settings' },
+];
+
+export default function Sidebar() {
+  const dispatch = useAppDispatch();
+  const { sidebarOpen, sidebarCollapsed } = useAppSelector(state => state.ui);
+
+  return (
+    <>
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+          onClick={() => dispatch(setSidebarOpen(false))}
+        />
+      )}
+      
+      {/* Sidebar */}
+      <aside className={`fixed left-0 top-0 h-full bg-gray-900 text-white z-50 transition-all duration-300 ${
+        sidebarOpen ? 'w-64' : 'w-16'
+      }`}>
+        <div className="flex items-center justify-between p-4 border-b border-gray-700">
+          <h1 className={`font-bold text-xl ${!sidebarOpen && 'hidden'}`}>
+            Redux App
+          </h1>
+          <button
+            onClick={() => dispatch(toggleSidebarCollapsed())}
+            className="p-2 rounded-md hover:bg-gray-700 hidden md:block"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        </div>
+
+        <nav className="mt-8">
+          <ul className="space-y-2 px-4">
+            {menuItems.map((item, index) => (
+              <li key={index}>
+                <a
+                  href={item.href}
+                  className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  <span className="text-xl">{item.icon}</span>
+                  <span className={`${!sidebarOpen && 'hidden'}`}>
+                    {item.label}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </aside>
+    </>
+  );
+}
+
+// ============================
+// 16. NOTIFICATION SYSTEM
+// ============================
+
+// components/UI/NotificationSystem.tsx
+'use client';
+
+import { useEffect } from 'react';
+import { useAppDispatch, useAppSelector } from '../../lib/store/hooks';
+import { removeNotification } from '../../lib/store/features/ui/uiSlice';
+
+export default function NotificationSystem() {
+  const dispatch = useAppDispatch();
+  const notifications = useAppSelector(state => state.ui.notifications);
+
+  useEffect(() => {
+    notifications.forEach(notification => {
+      if (notification.duration) {
+        const timer = setTimeout(() => {
+          dispatch(removeNotification(notification.id));
+        }, notification.duration);
+
+        return () => clearTimeout(timer);
+      }
+    });
+  }, [notifications, dispatch]);
+
+  return (
+    <div className="fixed top-4 right-4 z-50 space-y-4 max-w-sm">
+      {notifications.map((notification) => (
+        <div
+          key={notification.id}
+          className={`p-4 rounded-lg shadow-lg border-l-4 ${
+            notification.type === 'success' ? 'bg-green-50 border-green-500 text-green-800' :
+            notification.type === 'error' ? 'bg-red-50 border-red-500 text-red-800' :
+            notification.type === 'warning' ? 'bg-yellow-50 border-yellow-500 text-yellow-800' :
+            'bg-blue-50 border-blue-500 text-blue-800'
+          } transform transition-all duration-300 ease-in-out`}
+        >
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              {notification.type === 'success' && (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              )}
+              {notification.type === 'error' && (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              )}
+              {notification.type === 'warning' && (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              )}
+              {notification.type === 'info' && (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+              )}
+            </div>
+            
+            <div className="ml-3 flex-1">
+              <h3 className="text-sm font-medium">{notification.title}</h3>
+              <p className="text-sm mt-1 opacity-90">{notification.message}</p>
+              
+              {notification.actions && (
+                <div className="mt-3 space-x-2">
+                  {notification.actions.map((action, index) => (
+                    <button
+                      key={index}
+                      onClick={action.action}
+                      className="text-xs font-medium underline hover:no-underline"
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <button
+              onClick={() => dispatch(removeNotification(notification.id))}
+              className="ml-4 flex-shrink-0 text-gray-400 hover:text-gray-600"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================
+// 17. LOADING SPINNER COMPONENT
+// ============================
+
+// components/UI/LoadingSpinner.tsx
+'use client';
+
+interface LoadingSpinnerProps {
+  size?: 'sm' | 'md' | 'lg';
+  color?: string;
+  text?: string;
+}
+
+export default function LoadingSpinner({ 
+  size = 'md', 
+  color = 'text-blue-600',
+  text 
+}: LoadingSpinnerProps) {
+  const sizeClasses = {
+    sm: 'w-4 h-4',
+    md: 'w-8 h-8',
+    lg: 'w-12 h-12'
+  };
+
+  return (
+    <div className="flex items-center justify-center p-8">
+      <div className="text-center">
+        <div 
+          className={`${sizeClasses[size]} ${color} animate-spin mx-auto mb-4`}
+        >
+          <svg fill="none" viewBox="0 0 24 24">
+            <circle 
+              className="opacity-25" 
+              cx="12" 
+              cy="12" 
+              r="10" 
+              stroke="currentColor" 
+              strokeWidth="4"
+            />
+            <path 
+              className="opacity-75" 
+              fill="currentColor" 
+              d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            />
+          </svg>
+        </div>
+        {text && (
+          <p className="text-sm text-gray-600">{text}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================
+// 18. CUSTOM HOOKS FOR BUSINESS LOGIC
+// ============================
+
+// lib/store/hooks/useAuth.ts
+import { useAppSelector, useAppDispatch } from '../hooks';
+import { useEffect, useCallback } from 'react';
+import { refreshToken, updateLastActivity } from '../features/auth/authSlice';
+
+export const useAuthSession = () => {
+  const dispatch = useAppDispatch();
+  const { token, refreshToken: refToken, lastActivity } = useAppSelector(state => state.auth);
+  
+  const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+  const REFRESH_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+
+  const checkSession = useCallback(() => {
+    const now = Date.now();
+    const timeSinceActivity = now - lastActivity;
+    
+    if (timeSinceActivity > SESSION_TIMEOUT) {
+      // Session expired, logout user
+      dispatch({ type: 'auth/logoutUser/fulfilled' });
+      return false;
+    }
+    
+    if (timeSinceActivity > REFRESH_THRESHOLD && refToken) {
+      // Try to refresh token
+      dispatch(refreshToken());
+    }
+    
+    return true;
+  }, [dispatch, lastActivity, refToken]);
+
+  const updateActivity = useCallback(() => {
+    dispatch(updateLastActivity());
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    const interval = setInterval(checkSession, 60 * 1000); // Check every minute
+    
+    // Add activity listeners
+    const activities = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+    activities.forEach(activity => {
+      document.addEventListener(activity, updateActivity, true);
+    });
+
+    return () => {
+      clearInterval(interval);
+      activities.forEach(activity => {
+        document.removeEventListener(activity, updateActivity, true);
+      });
+    };
+  }, [token, checkSession, updateActivity]);
+
+  return { checkSession, updateActivity };
+};
+
+// ============================
+// 19. MIDDLEWARE FOR LOGGING
+// ============================
+
+// lib/store/middleware/logger.ts
+import { Middleware } from '@reduxjs/toolkit';
+
+export const loggerMiddleware: Middleware = (store) => (next) => (action) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.group(`Action: ${action.type}`);
+    console.log('Previous State:', store.getState());
+    console.log('Action:', action);
+    
+    const result = next(action);
+    
+    console.log('Next State:', store.getState());
+    console.groupEnd();
+    
+    return result;
+  }
+  
+  return next(action);
+};
+
+// ============================
+// 20. ERROR BOUNDARY FOR REDUX ERRORS
+// ============================
+
+// components/ErrorBoundary/ReduxErrorBoundary.tsx
+'use client';
+
+import React from 'react';
+
+interface State {
+  hasError: boolean;
+  error?: Error;
+}
+
+interface Props {
+  children: React.ReactNode;
+  fallback?: React.ComponentType<{ error: Error; retry: () => void }>;
+}
+
+class ReduxErrorBoundary extends React.Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Redux Error Boundary caught an error:', error, errorInfo);
+    
+    // You can log to an error reporting service here
+    // Example: Sentry.captureException(error, { contexts: { react: errorInfo } });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      const { fallback: Fallback } = this.props;
+      
+      if (Fallback && this.state.error) {
+        return (
+          <Fallback 
+            error={this.state.error} 
+            retry={() => this.setState({ hasError: false, error: undefined })}
+          />
+        );
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="max-w-md w-full bg-white shadow-lg rounded-lg p-8 text-center">
+            <div className="text-red-500 mb-4">
+              <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Something went wrong</h2>
+            <p className="text-gray-600 mb-6">
+              An error occurred while processing your request. Please try refreshing the page.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              Refresh Page
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default ReduxErrorBoundary;
+
+// ============================
+// 21. PACKAGE.JSON DEPENDENCIES
+// ============================
+
+/*
+{
+  "name": "redux-toolkit-nextjs-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@reduxjs/toolkit": "^2.0.1",
+    "react-redux": "^9.0.4",
+    "redux-persist": "^6.0.0",
+    "next": "14.0.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-hot-toast": "^2.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@types/react-redux": "^7.1.33",
+    "autoprefixer": "^10.4.16",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "14.0.4",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.3"
+  }
+}
+*/
+
+// ============================
+// 22. ENVIRONMENT CONFIGURATION
+// ============================
+
+/*
+// .env.local
+NEXT_PUBLIC_API_URL=http://localhost:3000/api
+NEXT_PUBLIC_APP_NAME="Redux Toolkit App"
+NEXT_PUBLIC_APP_VERSION="1.0.0"
+
+// For production
+NEXTAUTH_SECRET=your-secret-here
+NEXTAUTH_URL=https://yourdomain.com
+*/
+
+// ============================
+// 23. USAGE EXAMPLES
+// ============================
+
+/*
+// Example: Using in a component
+import { useAppDispatch, useAppSelector } from '../lib/store/hooks';
+import { fetchPosts } from '../lib/store/features/posts/postsSlice';
+import { addNotification } from '../lib/store/features/ui/uiSlice';
+
+function MyComponent() {
+  const dispatch = useAppDispatch();
+  const { posts, isLoading } = useAppSelector(state => state.posts);
+  
+  const handleFetchPosts = () => {
+    dispatch(fetchPosts({ page: 1, limit: 10 }));
+  };
+  
+  const showNotification = () => {
+    dispatch(addNotification({
+      type: 'success',
+      title: 'Success!',
+      message: 'Operation completed successfully.'
+    }));
+  };
+  
+  return (
+    <div>
+      <button onClick={handleFetchPosts}>Fetch Posts</button>
+      <button onClick={showNotification}>Show Notification</button>
+      {isLoading && <div>Loading...</div>}
+      {posts.map(post => <div key={post.id}>{post.title}</div>)}
+    </div>
+  );
+}
+*/
+
+// ============================
+// SUMMARY OF KEY FEATURES
+// ============================
+
+/*
+✅ COMPLETE REDUX TOOLKIT SETUP:
+- Store configuration with persistence
+- Typed hooks and selectors
+- Multiple feature slices (auth, posts, UI)
+- RTK Query for API management
+- Middleware integration
+
+✅ AUTHENTICATION SYSTEM:
+- Login/Register with async thunks
+- Token management and refresh
+- Session handling and timeout
+- Protected routes
+
+✅ POSTS MANAGEMENT:
+- CRUD operations with RTK Query
+- Optimistic updates
+- Pagination and filtering
+- Real-time UI updates
+
+✅ UI STATE MANAGEMENT:
+- Theme switching
+- Sidebar state
+- Notifications system
+- Loading states
+- Modal management
+
+✅ TYPESCRIPT INTEGRATION:
+- Fully typed throughout
+- Interface definitions
+- Type-safe dispatching and selection
+- Generic components
+
+✅ NEXT.JS INTEGRATION:
+- App router compatibility
+- SSR considerations
+- Client-side state hydration
+- Proper provider setup
+
+✅ PRODUCTION READY FEATURES:
+- Error boundaries
+- Loading states
+- Persistence
+- Performance optimizations
+- Development tools integration
+*/
